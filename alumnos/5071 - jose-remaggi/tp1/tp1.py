@@ -1,80 +1,99 @@
 #!/usr/bin/python
-from utils.help import get_options
-from multiprocessing import Process, Queue
 
-def crear_hijos():
-    hijos = []
+import os
+import argparse
+from multiprocessing import Process
+from multiprocessing import Queue
 
-    for i in range(options['hijos']):
-        hijo = Process(target=contar_palabras, args=(out_queue,))
-        hijos.append(hijo)
-        hijo.start()
-    return hijos
+def ArgsParse():
+    parser = argparse.ArgumentParser()
+    parser.add_argument("-f", "--file", dest = "archivo", required = True, help = "Nombre del archivo") # it seems like nargs is not required...
+    parser.add_argument("-s", "--size", dest = "tamanio", nargs = "?", default = 2048, const = 1024, type = int, help = "Tamanio lectura")
+    parser.add_argument("-p", "--process", dest = "procesos", nargs = "?", default = 2, type = int, help = "Cantidad procesos") # it seems like nargs is not required...
+    return parser.parse_args()
 
+def CrearProcesos():
+    listaProcesos = []
+    for numero in range(cantidadProcesos):
+        p = Process(target=ContarPalabras, args=(colaResultadoSuma,))
+        listaProcesos.append(p)
+        p.start()
+    return listaProcesos
 
-def contar_palabras(out_queue):
-    cantidad_palabras = 0
-    while True:
-        contenido = in_queue.get()
-
-        if contenido == '':
-            break
-        longitud_contenido = len(contenido.split())
-
-        cantidad_palabras= cantidad_palabras + longitud_contenido
-
-        out_queue.put(cantidad_palabras)
-        if in_queue.empty():
-            mostrar_palabras()
-
-
-def leer_archivo(in_queue):
-    import os
-    fd = os.open(options['archivo'], os.O_RDONLY)
-    delimitadores = [' ', '\t', '\n', ',']
-    proxima_palabra = ''
-    palabra_parcial = []
-    while True:
-        contenido = os.read(fd, options['cantidad_bytes'])
-        if contenido == '':
-            break
-        if not contenido[-1] in delimitadores:
-            linea_parcial = contenido.split()
-
-            longitud_palabra_parcial = len(linea_parcial[-1])
-            palabra_parcial.append(linea_parcial[-1])
-
-            diff = options['cantidad_bytes'] - longitud_palabra_parcial
-            if diff != 0:
-                palabra_parcial = []
-                palabra = proxima_palabra + contenido[0:diff]
-
-                proxima_palabra = contenido[diff: options['cantidad_bytes']]
-                in_queue.put(palabra)
-            else:
-                concatenar_palabra = "".join(palabra_parcial)
-                proxima_palabra = proxima_palabra + concatenar_palabra
-
+def LeerArchivo(nombreArchivo,cantidadbytes,colaTextoSplit,cantidadProcesos):
+    fd = os.open(nombreArchivo,os.O_RDONLY)
+    EOF = True
+    indice = 0
+    c=0
+    while EOF :
+        bloque = os.read(fd,cantidadbytes)
+        for letra in bloque[::-1]:
+            indice = indice +1
+            if (letra == " ") or letra == "\n":
+                #le agrego el salto de linea porque se me cortaba de nuevo
+                i = indice
+                indice = 0
+                break
+        espacio = cantidadbytes - i
+        if c==0:
+            texto = bloque[0:espacio]
+            siguiente = bloque[espacio+1:cantidadbytes]
+        if c!=0:
+            texto = siguiente+bloque[0:espacio]
+            siguiente = bloque[espacio+1:cantidadbytes]
+        colaTextoSplit.put(texto.split())
+        texto = ""
+        c = c + 1
+        if len(bloque)<cantidadbytes:
+            EOF = False
     os.close(fd)
+    for rango in range(cantidadProcesos):
+        colaTextoSplit.put("TERMINO")
 
 
-def mostrar_palabras():
-    total_palabras = 0
-    while out_queue.qsize() > 0:
-        total_palabras = out_queue.get()
-	
-    print ('Total Palabras encontradas: ', total_palabras)
-   
+def ContarPalabras(colaResultadoSuma):
+    textoSplit = ""
+    suma = 0
+    while True:
+        textoSplit = colaTextoSplit.get()
+        if(textoSplit=="TERMINO"):
+            break
+        print (textoSplit)
+        cantidad = len(textoSplit)
+        suma = suma + cantidad
+    colaResultadoSuma.put(suma)
+
+
+def UnirProcesos(lista):
+    for pro in lista:
+        pro.join()
+
+
+def MostrarCantidadPalabras():
+    suma = 0
+    while colaResultadoSuma.empty() is False:
+        cantidad_palabras = colaResultadoSuma.get()
+        if(cantidad_palabras!=0):
+            suma = suma + cantidad_palabras
+            #print 'cantidad de palabras del archivo: ', cantidad_palabras
+    print ('cantidad de palabras del archivo: ',suma)
+
+
 
 if __name__ == "__main__":
-    options = get_options()
 
-    in_queue = Queue()
-    out_queue = Queue()
+    argumento = ArgsParse()
+    nombreArchivo = argumento.archivo
+    cantidadbytes = argumento.tamanio
+    cantidadProcesos = argumento.procesos
 
-    hijos = crear_hijos()
-    
-    leer_archivo(in_queue)
+    colaTextoSplit = Queue()
+    colaResultadoSuma = Queue()
 
-    for hijo in hijos:
-        hijo.join()
+    lista = CrearProcesos()
+
+    LeerArchivo(nombreArchivo,cantidadbytes,colaTextoSplit,cantidadProcesos)
+
+    UnirProcesos(lista)
+
+    MostrarCantidadPalabras() 
